@@ -1,0 +1,40 @@
+
+
+generator client {
+    provider = "prisma-client"
+    output = "../generates/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+}
+
+
+model Interview {
+    id              String @id @default(uuid())
+    githubMetaData  Json
+    conversation Message[]
+    score Int @default(0)
+    status InterviewStatus
+    
+}
+
+model Message {
+    id String @id @default(uuid())
+    message String
+    author Author
+
+    interviewId String
+    interview Interview @relation(fields: [interviewId], references: [id])
+}
+
+enum Author {
+    user
+    AI
+}
+
+enum InterviewStatus {
+    Pre
+    InProgress
+    Done
+}
