@@ -10,12 +10,20 @@ export function Interview() {
     const socketRef = useRef<WebSocket | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null)
 
+    if (!interviewId){
+        return <div>
+            <h3>Sorry! no Interview Id found</h3>
+        </div>
+    }
 
     useEffect(() => {
         
-        function connectDeepgramSocket(stream: MediaStream) {
+        function connectDeepgramSocket(stream: MediaStream, interviewId: string) {
 
-            const wsUrl = BACKEND_URL.replace(/^http/, 'ws');
+            // TODO: handle https endpoint
+            let wsUrl = BACKEND_URL.replace(/^http/, 'ws');
+            wsUrl = wsUrl + `?interviewId=${interviewId}`
+            
             console.log({ wsUrl })
             const socket = new WebSocket(wsUrl)
             socketRef.current = socket
@@ -83,7 +91,7 @@ export function Interview() {
 
             streamRef.current = stream;
 
-            connectDeepgramSocket(stream) //sends audio stream to backend via websocket
+            connectDeepgramSocket(stream, interviewId) //sends audio stream to backend via websocket
 
             pc.addTrack(stream.getTracks()[0]!);
 

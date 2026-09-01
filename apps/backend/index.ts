@@ -118,8 +118,16 @@ app.post("/session", async (req, res) => {
 
 
 
-wss.on('connection', async (browserWs) => {
+wss.on('connection', async (browserWs, req) => {
   console.log('Browser connected via WebSocket');
+
+  const url = new URL(req.url!, `http://${req.headers.host}`);
+  const interviewId = url.searchParams.get("interviewId");
+  // TODO: handle interview id securely
+  if (!interviewId) {
+    browserWs.close(1008, "Missing interviewId");
+    return;
+  }
 
   try {
 
@@ -150,7 +158,7 @@ wss.on('connection', async (browserWs) => {
     });
 
 
-    dgWs.on("message", (data) => {
+    dgWs.on("message", async (data) => {
         const received = JSON.parse(data.toString());
 
         console.log("🔥 Deepgram:", received);
@@ -159,15 +167,23 @@ wss.on('connection', async (browserWs) => {
           received.channel?.alternatives?.[0]?.transcript;
 
         if (
-          transcript &&
-          browserWs.readyState === WebSocket.OPEN
+          transcript && browserWs.readyState === WebSocket.OPEN
         ) {
+          console.log({ transcript })
           browserWs.send(
             JSON.stringify({
               type: "transcript",
               text: transcript,
             })
           );
+          await prisma.message.create({
+            data:{
+              interviewId: interviewId,
+              author: 'user',
+              message: transcript,
+
+            }
+          })
           console.log("transcript", transcript)
         }
       });
