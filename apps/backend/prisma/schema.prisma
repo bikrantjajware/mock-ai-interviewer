@@ -23,7 +23,7 @@ model Message {
     id String @id @default(uuid())
     message String
     author Author
-
+    createdAt DateTime @default(now())
     interviewId String
     interview Interview @relation(fields: [interviewId], references: [id])
 }

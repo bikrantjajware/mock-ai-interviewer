@@ -1,14 +1,82 @@
-import { BACKEND_URL } from "@/lib/config"
-import { useEffect, useRef } from "react"
-import { useParams } from "react-router"
+import { BACKEND_URL } from "@/lib/config";
+import { useEffect, useRef } from "react";
+import { useParams } from "react-router";
 
-export function Interview(){
-    const { interviewId } = useParams()
+export function Interview() {
+    const { interviewId } = useParams();
 
-    const audioElementRef:any = useRef(null)
+    const audioElementRef: any = useRef(null);
+    const streamRef = useRef<MediaStream | null>(null);
+    const socketRef = useRef<WebSocket | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
 
-    useEffect(()=>{
-        (async () =>{
+    if (!interviewId){
+        return <div>
+            <h3>Sorry! no Interview Id found</h3>
+        </div>
+    }
+
+    useEffect(() => {
+        
+        function connectDeepgramSocket(stream: MediaStream, interviewId: string) {
+
+            // TODO: handle https endpoint
+            let wsUrl = BACKEND_URL.replace(/^http/, 'ws');
+            wsUrl = wsUrl + `?interviewId=${interviewId}`
+            
+            console.log({ wsUrl })
+            const socket = new WebSocket(wsUrl)
+            socketRef.current = socket
+
+            socket.onopen = async ()  => {
+
+                console.log("connection open with BE")
+                const options = { mimeType: 'audio/webm;codecs=opus' };
+    
+                const mediaRecorder = new MediaRecorder(stream, options);
+                mediaRecorderRef.current = mediaRecorder;
+    
+                let chunkId = 0;
+                 // 4. Capture raw chunks and stream directly to your Node backend
+                mediaRecorder.ondataavailable = async (event) => {
+
+                    const buffer = await event.data.arrayBuffer();
+                    if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+                        socket.send(buffer); // Pushes the raw Blob binary data chunk
+                    }
+                };
+    
+                mediaRecorder.start(250);
+            }
+
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'transcript') {
+                        console.log('transcript', data.text)
+                    }
+                } catch (e) {
+                    console.error('Error parsing backend payload:', e);
+                }
+            };
+
+            socket.onclose = () => {
+                console.log("disconnected")
+                // setStatus('Disconnected');
+                if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+                    mediaRecorderRef.current.stop();
+                }
+                // stopRecording();
+            };
+
+            socket.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+                // setStatus('Connection error');
+            };
+            
+        }
+        
+        (async () => {
             const pc = new RTCPeerConnection();
 
             // Set up to play remote audio from the model
@@ -17,15 +85,19 @@ export function Interview(){
             pc.ontrack = (e) => (audioElementRef.current!.srcObject = e.streams[0]);
 
             // Add local audio track for microphone input in the browser
-            const ms = await navigator.mediaDevices.getUserMedia({
-            audio: true,
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
             });
-            pc.addTrack(ms.getTracks()[0]!);
+
+            streamRef.current = stream;
+
+            connectDeepgramSocket(stream, interviewId) //sends audio stream to backend via websocket
+
+            pc.addTrack(stream.getTracks()[0]!);
 
             // Set up data channel for sending and receiving events
-            // const dc = pc.createDataChannel("oai-events"); #not needed as kirat said??
 
-                        // Start the session using the Session Description Protocol (SDP)
+            // Start the session using the Session Description Protocol (SDP)
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer); //sets local client's sdp
 
@@ -43,15 +115,28 @@ export function Interview(){
                 sdp: await sdpResponse.text(),
             };
             await pc.setRemoteDescription(answer);
+        })();
 
-        })()
+        return () => {
+            mediaRecorderRef.current?.stop();
+            mediaRecorderRef.current = null;
 
-    },[interviewId])
+            socketRef.current?.close();
+            socketRef.current = null;
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach((track) => track.stop());
+                streamRef.current = null;
+            }
 
-    return <div>
-        <h1>
-            Interview for :<span>{interviewId}</span>
-            <audio ref={audioElementRef} />
-        </h1>
-    </div>
+        };
+    }, [interviewId]);
+
+    return (
+        <div>
+            <h1>
+                Interview for :<span>{interviewId}</span>
+                <audio ref={audioElementRef} />
+            </h1>
+        </div>
+    );
 }
