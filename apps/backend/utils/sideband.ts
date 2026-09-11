@@ -1,5 +1,7 @@
 import WebSocket from "ws";
 import { prisma } from "../db";
+
+
 export async function initSideband(callId: string | undefined, interviewId: string) {
     if (!callId) {
         throw new Error("OpenAI callId is missing; cannot initialize sideband websocket.");
@@ -52,6 +54,11 @@ export async function initSideband(callId: string | undefined, interviewId: stri
             parsed.response.output.map((x:any) => contents = [...contents, ...x.content]);
             const assistantMessage = contents.filter(x => x.type === "output_audio").map(x => x.transcript).join(" ");
 
+            if(assistantMessage.trim() === ""){
+                console.log("assistant message is empty, skipping saving to db")
+                return;
+            }
+            console.log("assistant message", assistantMessage)
             await prisma.message.create({
                 data:{
                     author: 'AI',

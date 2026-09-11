@@ -7,6 +7,7 @@ import { prisma } from "./db"
 import { InterviewStatus } from "./generates/prisma/enums"
 import crypto from "crypto";
 import { initSideband } from "./utils/sideband"
+import { handleEndInterview } from "./utils/result"
 import { WebSocketServer, WebSocket } from "ws"
 
 
@@ -116,6 +117,97 @@ app.post("/session", async (req, res) => {
 });
 
 
+app.post('/api/v1/end-interview', async (req, res) => {
+	const interviewId = req.body?.interviewId as string
+	if (!interviewId){
+		res.status(400).json({ message: 'Missing interviewId' })
+		return
+	}
+  const interview = await prisma.interview.findUnique({
+		where: { id: interviewId },
+		include: { conversation: {
+      orderBy: { createdAt: 'asc' }
+    } }
+	})
+	if (!interview){
+		res.status(404).json({ message: 'Interview not found' })
+		return
+	}
+  if (interview.status === InterviewStatus.Done) {
+    res.json({ message: 'Interview already ended' })
+		return
+	}
+
+  const claim = await prisma.interview.updateMany({
+    where: {
+      id: interviewId,
+      status: { not: InterviewStatus.Done }
+    },
+    data: { status: InterviewStatus.Done }
+  })
+  if (claim.count === 0) {
+    res.status(202).json({ message: 'Interview analysis is already done' })
+    return
+  }
+
+	const messages = interview.conversation.map( msg => {
+		return {
+			message: msg.message,
+			author: msg.author,
+			createdAt: msg.createdAt
+		}
+	})
+  try {
+    const result = await handleEndInterview(messages)
+
+    await prisma.interview.update({
+      where: { id: interviewId },
+      data: {
+        feedback: result.feedback,
+        score: result.score
+      }
+    })
+
+    res.json({ message: 'Interview ended successfully' })
+  } catch (error) {
+    await prisma.interview.update({
+      where: { id: interviewId },
+      data: { status: interview.status }
+    })
+    console.error('Failed to analyze interview:', error)
+    res.status(500).json({ message: 'Failed to analyze interview' })
+  }
+
+})
+
+
+
+app.get('/api/v1/interview/result/:interviewId', async (req, res) => {
+
+	// TODO: add ownership check for interviewId
+	const interviewId = req.params.interviewId
+
+	const interview = await prisma.interview.findUnique({
+		where: { id: interviewId },
+		include: { conversation: {
+			orderBy: { createdAt: 'asc' }
+		} }
+	})
+
+	if (!interview || interview.status !== InterviewStatus.Done || !interview.feedback) {
+		res.status(404).json({ message: 'Interview result not found' })
+		return
+	}
+
+	const conversation = interview.conversation.map(msg => ({
+		message: msg.message,
+		author: msg.author,
+		createdAt: msg.createdAt
+	}));
+
+	res.json({ feedback: interview.feedback, score: interview.score, conversation })
+
+})
 
 
 wss.on('connection', async (browserWs, req) => {
@@ -167,7 +259,7 @@ wss.on('connection', async (browserWs, req) => {
           received.channel?.alternatives?.[0]?.transcript;
 
         if (
-          transcript && browserWs.readyState === WebSocket.OPEN
+          transcript?.trim() && browserWs.readyState === WebSocket.OPEN
         ) {
           console.log({ transcript })
           browserWs.send(
@@ -181,7 +273,6 @@ wss.on('connection', async (browserWs, req) => {
               interviewId: interviewId,
               author: 'user',
               message: transcript,
-
             }
           })
           console.log("transcript", transcript)
