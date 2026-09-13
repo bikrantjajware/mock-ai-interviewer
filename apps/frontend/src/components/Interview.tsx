@@ -1,6 +1,7 @@
 import { BACKEND_URL } from "@/lib/config";
 import { useEffect, useRef } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
+import { Button } from "./ui/button";
 
 export function Interview() {
     const { interviewId } = useParams();
@@ -8,12 +9,63 @@ export function Interview() {
     const audioElementRef: any = useRef(null);
     const streamRef = useRef<MediaStream | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+    const endingInterviewRef = useRef(false);
+    const navigate = useNavigate();
 
     if (!interviewId){
         return <div>
             <h3>Sorry! no Interview Id found</h3>
         </div>
+    }
+
+
+    const cleanupInterview = () => {
+        if (mediaRecorderRef.current?.state !== "inactive") {
+            mediaRecorderRef.current?.stop();
+        }
+        mediaRecorderRef.current = null;
+
+        if (socketRef.current?.readyState === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.CONNECTING) {
+            socketRef.current.close();
+        }
+        socketRef.current = null;
+
+        peerConnectionRef.current?.close();
+        peerConnectionRef.current = null;
+
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+    };
+
+    const handleEndInterview = async () => {
+        if (endingInterviewRef.current) {
+            return;
+        }
+
+        endingInterviewRef.current = true;
+        cleanupInterview();
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/v1/end-interview`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ interviewId }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to end interview: ${response.status}`);
+            }
+            console.log("waiting for 2 seconds before navigating to results page")
+            await new Promise(resolve => setTimeout(resolve, 2000));``
+            navigate(`/results/${interviewId}`);
+        } catch (error) {
+            endingInterviewRef.current = false;
+            console.error("Failed to end interview:", error);
+        }
     }
 
     useEffect(() => {
@@ -78,6 +130,7 @@ export function Interview() {
         
         (async () => {
             const pc = new RTCPeerConnection();
+            peerConnectionRef.current = pc;
 
             // Set up to play remote audio from the model
             // audioElement.current = document.createElement("audio");
@@ -118,15 +171,7 @@ export function Interview() {
         })();
 
         return () => {
-            mediaRecorderRef.current?.stop();
-            mediaRecorderRef.current = null;
-
-            socketRef.current?.close();
-            socketRef.current = null;
-            if (streamRef.current) {
-                streamRef.current.getTracks().forEach((track) => track.stop());
-                streamRef.current = null;
-            }
+            cleanupInterview();
 
         };
     }, [interviewId]);
@@ -136,6 +181,7 @@ export function Interview() {
             <h1>
                 Interview for :<span>{interviewId}</span>
                 <audio ref={audioElementRef} />
+                <Button onClick={handleEndInterview}>End Interview</Button>
             </h1>
         </div>
     );
